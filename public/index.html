@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Impostor Game</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Eingangsscreen -->
+  <div id="screen-join">
+    <h1>Impostor Game</h1>
+    <input type="text" id="gameCode" placeholder="Spielcode">
+    <input type="text" id="username" placeholder="Benutzername">
+    <div style="font-size: 0.95em; color: #6e2100; margin-bottom: 0.5em;">
+      Bitte gib einen Benutzernamen ein. Zum Beitreten benötigst du außerdem einen Spielcode.
+    </div>
+    <div style="display: flex; gap: 0.5em;">
+      <button id="createBtn">Spiel erstellen</button>
+      <button id="joinBtn">Beitreten</button>
+    </div>
+    <div id="join-error" style="color: red;"></div>
+    <div id="playerListContainer" style="margin-top:1em; display:none;">
+      <div id="lobbyStatus"></div>
+      <h3>Spieler im Raum:</h3>
+      <ul id="playerList"></ul>
+      <button id="startGameBtn" style="display:none;">Spiel starten</button>
+    </div>
+  </div>
+
+  <!-- Fragescreen -->
+  <div id="screen-question" style="display: none;">
+    <h2 id="questionText">Frage wird geladen...</h2>
+    <input type="text" id="answerInput" placeholder="Deine Antwort">
+    <button id="submitAnswerBtn">Antwort abschicken</button>
+  </div>
+
+  <!-- Warten auf andere Spieler -->
+  <div id="screen-waiting" style="display: none;">
+    <h2>Bitte warten...</h2>
+    <div>Warte, bis alle anderen ihre Antwort abgegeben haben.</div>
+  </div>
+
+  <!-- Diskussionsscreen -->
+  <div id="screen-discussion" style="display: none;">
+    <h2>Diskussion</h2>
+    <div id="mainQuestion"></div>
+    <ul id="answersList"></ul>
+    <button id="voteBtn">Zum Abstimmen</button>
+  </div>
+
+  <!-- Auflösungsscreen -->
+  <div id="screen-result" style="display: none;">
+    <h2>Auflösung</h2>
+    <div id="resultText"></div>
+    <button onclick="location.reload()">Neues Spiel</button>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
