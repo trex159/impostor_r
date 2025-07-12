@@ -16,15 +16,15 @@
       Bitte gib einen Benutzernamen ein. Zum Beitreten benötigst du außerdem einen Spielcode.
     </div>
     <div style="display: flex; gap: 0.5em;">
-      <button id="createBtn">Spiel erstellen</button>
-      <button id="joinBtn">Beitreten</button>
+      <button id="createBtn">Neuen Raum erstellen</button>
+      <button id="joinBtn">Raum beitreten</button>
     </div>
     <div id="join-error" style="color: red;"></div>
     <div id="playerListContainer" style="margin-top:1em; display:none;">
       <div id="lobbyStatus"></div>
       <h3>Spieler im Raum:</h3>
       <ul id="playerList"></ul>
-      <button id="startGameBtn" style="display:none;">Spiel starten</button>
+      <button id="startGameBtn" style="display:none;">Spiel jetzt starten</button>
     </div>
   </div>
 
@@ -32,7 +32,7 @@
   <div id="screen-question" style="display: none;">
     <h2 id="questionText">Frage wird geladen...</h2>
     <input type="text" id="answerInput" placeholder="Deine Antwort">
-    <button id="submitAnswerBtn">Antwort abschicken</button>
+    <button id="submitAnswerBtn">Antwort absenden</button>
   </div>
 
   <!-- Warten auf andere Spieler -->
@@ -46,15 +46,17 @@
     <h2>Diskussion</h2>
     <div id="mainQuestion"></div>
     <ul id="answersList"></ul>
-    <button id="voteBtn">Zum Abstimmen</button>
+    <button id="voteBtn">Abstimmung starten</button>
   </div>
 
   <!-- Auflösungsscreen -->
   <div id="screen-result" style="display: none;">
     <h2>Auflösung</h2>
     <div id="resultText"></div>
-    <button onclick="location.reload()">Neues Spiel</button>
+   <!-- <button id="stayInRoomBtn">In Raum bleiben und zur Lobby</button> -->
+    <button id="leaveRoomToLobbyBtn">Raum verlassen und zur Lobby</button>
   </div>
+
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="script.js"></script>

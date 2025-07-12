@@ -24,6 +24,8 @@ let voteRevealTimeout = null;
 let revealTimeout = null;
 let lastPlayersInGame = [];
 
+let roundState = 0; // 0 = Lobby, 1 = Antwort, 2 = Diskussion, 3 = Abstimmung, 4 = Auflösung
+
 function getByIdSafe(id) {
   const el = document.getElementById(id);
   if (!el) {
@@ -32,14 +34,36 @@ function getByIdSafe(id) {
   return el;
 }
 
+// Hilfsfunktion: Spielcode validieren (nur Buchstaben/Zahlen)
+function isValidGameCode(code) {
+  return /^[A-Z0-9]+$/i.test(code);
+}
+
+// Hilfsfunktion: Ist der aktuelle Spieler ingame?
+function isCurrentPlayerIngame() {
+  // Fallback: Wenn __playersInGame nicht gesetzt, lasse zu (z.B. beim ersten Start)
+  if (!window.__playersInGame) return true;
+  return window.__playersInGame.includes(playerName);
+}
+
 // Spiel erstellen
 createBtn.onclick = () => {
   playerName = document.getElementById('username').value.trim();
+  let inputCode = document.getElementById('gameCode').value.trim();
   if (!playerName) {
     document.getElementById('join-error').textContent = 'Bitte gib einen Benutzernamen ein!';
     return;
   }
-  socket.emit('createGame', { name: playerName }, (res) => {
+  // Wenn Spielcode-Feld ausgefüllt, nutze diesen Code (Großschreibung, nur Buchstaben/Zahlen)
+  let customCode = '';
+  if (inputCode) {
+    customCode = inputCode.toUpperCase();
+    if (!isValidGameCode(customCode)) {
+      document.getElementById('join-error').textContent = 'Spielcode darf nur Buchstaben und Zahlen enthalten!';
+      return;
+    }
+  }
+  socket.emit('createGame', { name: playerName, customCode }, (res) => {
     if (res.error) {
       document.getElementById('join-error').textContent = res.error;
     } else {
@@ -101,9 +125,12 @@ socket.on('playerList', ({ players, hostName }) => {
 
   playersInGame = players;
   playerList.innerHTML = '';
-  players.forEach(name => {
+  players.forEach(obj => {
+    const name = obj.name;
+    const ingame = obj.ingame;
+    let status = ingame ? ' (im Spiel)' : ' (Lobby)';
     const li = document.createElement('li');
-    li.textContent = name + (name === hostName ? ' (Host)' : '');
+    li.textContent = name + (name === hostName ? ' (Host)' : '') + status;
     playerList.appendChild(li);
   });
   // Host sieht Start-Button, wenn genug Spieler
@@ -142,14 +169,31 @@ startGameBtn.onclick = () => {
 
 // Wenn das Spiel startet, Lobby ausblenden
 socket.on('gameStarted', () => {
-  screenJoin.style.display = 'none';
+  setRoundState(1); // Antwortphase
 });
 
 socket.on('question', (data) => {
-  screenQuestion.style.display = 'block';
-  screenDiscussion.style.display = 'none';
-  screenResult.style.display = 'none';
-  screenJoin.style.display = 'none';
+  // Setze die aktuelle Ingame-Spieler-Liste, falls vom Server gesendet
+  if (data && data.playersInGame) {
+    window.__playersInGame = data.playersInGame;
+  }
+  // Fallback: Wenn nicht vorhanden, versuche aus dem Voting-Screen oder der letzten Antwortliste zu übernehmen
+  if (!window.__playersInGame && data && data.players) {
+    window.__playersInGame = data.players;
+  }
+  // Nur anzeigen, wenn Spieler wirklich im Spiel ist
+  if (!isCurrentPlayerIngame()) {
+    setRoundState(0);
+    return;
+  }
+  // Zeige Fragescreen erst, wenn Frage und Placeholder da sind
+  if (data && data.question && data.placeholder) {
+    document.getElementById('questionText').textContent = data.question;
+    const answerInput = document.getElementById('answerInput');
+    answerInput.value = '';
+    answerInput.placeholder = data.placeholder || 'Deine Antwort';
+    setRoundState(1);
+  }
   // Speichere, ob man Impostor ist (wenn Frage abweicht)
   let isImpostor = false;
   if (data && data.question && data.placeholder) {
@@ -159,11 +203,6 @@ socket.on('question', (data) => {
   }
   // Speichere für Voting-Screen
   window.__isImpostor = !!data.isImpostor;
-
-  document.getElementById('questionText').textContent = data.question;
-  const answerInput = document.getElementById('answerInput');
-  answerInput.value = '';
-  answerInput.placeholder = data.placeholder || 'Deine Antwort';
 });
 
 submitAnswerBtn.onclick = () => {
@@ -171,19 +210,32 @@ submitAnswerBtn.onclick = () => {
   if (!answer) return;
 
   socket.emit('submitAnswer', answer);
-  screenQuestion.style.display = 'none';
-  screenWaiting.style.display = 'block';
+  setRoundState(0); // Nach Antwort: Warten/Lobby bis Diskussion startet
+  // Zeige immer den Bitte-Warten-Screen nach Antwort
+  if (screenWaiting) screenWaiting.style.display = 'block';
+  if (screenQuestion) screenQuestion.style.display = 'none';
+  if (screenDiscussion) screenDiscussion.style.display = 'none';
+  if (screenVoting) screenVoting.style.display = 'none';
+  if (screenResult) screenResult.style.display = 'none';
+  if (screenJoin) screenJoin.style.display = 'none';
+  if (playerListContainer) playerListContainer.style.display = 'none';
 };
 
 socket.on('startDiscussion', (data) => {
-  screenDiscussion.style.display = 'block';
-  screenQuestion.style.display = 'none';
-  screenResult.style.display = 'none';
-  screenJoin.style.display = 'none';
-  screenWaiting.style.display = 'none';
+  // Setze die aktuelle Ingame-Spieler-Liste aus den Antworten
+  window.__playersInGame = data.answers.map(a => a.name);
 
+  // Nur anzeigen, wenn Spieler wirklich im Spiel ist
+  if (!isCurrentPlayerIngame()) {
+    setRoundState(0);
+    return;
+  }
+  setRoundState(2);
+
+  // Antworten der Mitspieler immer korrekt anzeigen, auch wenn der Screen schon sichtbar ist
   playersInGame = data.answers.map(a => a.name);
 
+  // Setze die Diskussionsfrage und Antworten
   document.getElementById('mainQuestion').textContent = `Frage: ${data.mainQuestion}`;
   const answersList = document.getElementById('answersList');
   answersList.innerHTML = '';
@@ -193,6 +245,13 @@ socket.on('startDiscussion', (data) => {
     answersList.appendChild(li);
   });
 
+  // Impostor-Alert immer anzeigen, wenn nötig
+  if (window.__isImpostor) {
+    setTimeout(() => {
+      alert('Du bist der IMPOSTOR! Versuche, nicht aufzufallen.');
+    }, 100); // Verzögerung, damit Screen sichtbar ist
+  }
+
   // "Zur Abstimmung"-Button immer anzeigen und aktivieren
   const voteBtn = document.getElementById('voteBtn');
   if (voteBtn) {
@@ -200,9 +259,25 @@ socket.on('startDiscussion', (data) => {
     voteBtn.disabled = false;
     voteBtn.onclick = () => startVoting();
   }
+
+  // Stelle sicher, dass der Bitte-Warten-Screen ausgeblendet wird
+  screenWaiting.style.display = 'none';
 });
 
 function startVoting() {
+  // Nur anzeigen, wenn Spieler wirklich im Spiel ist
+  if (!isCurrentPlayerIngame()) {
+    screenDiscussion.style.display = 'none';
+    screenQuestion.style.display = 'none';
+    screenResult.style.display = 'none';
+    screenJoin.style.display = 'none';
+    screenWaiting.style.display = 'none';
+    updateLobbyStatus('Du bist aktuell nicht im Spiel. Warte auf die nächste Runde.');
+    playerListContainer.style.display = 'block';
+    return;
+  }
+  setRoundState(3);
+
   screenDiscussion.style.display = 'none';
 
   // Voting-Screen bauen
@@ -236,10 +311,12 @@ function startVoting() {
 
   hasVoted = false;
 
+  // Nur ingame-Spieler dürfen abstimmen und werden angezeigt
+  const ingameNames = window.__playersInGame || [];
   const ul = document.createElement('ul');
   votingDiv.appendChild(ul);
 
-  playersInGame.forEach(name => {
+  ingameNames.forEach(name => {
     if (name === playerName) return; // Nicht für sich selbst stimmen
 
     const li = document.createElement('li');
@@ -256,7 +333,7 @@ function startVoting() {
     ul.appendChild(li);
   });
 
-  // Anzeige für abgegebene Stimmen (nur wer hat schon abgestimmt)
+  // Anzeige für abgegebene Stimmen (nur wer hat schon abgestimmt, nur ingame)
   voteProgressList = document.createElement('div');
   voteProgressList.id = 'votesList';
   voteProgressList.style.marginTop = '20px';
@@ -266,11 +343,12 @@ function startVoting() {
 
 // Zeige Fortschritt der abgegebenen Stimmen (nur Namen, nicht für wen)
 function showVoteProgress(voted) {
-  if (!voteProgressList || !Array.isArray(playersInGame)) return;
+  // Nur ingame-Spieler anzeigen
+  if (!voteProgressList || !Array.isArray(window.__playersInGame)) return;
   voteProgressList.innerHTML = '<h3>Abgestimmt:</h3>';
   const ul = document.createElement('ul');
   voteProgressList.appendChild(ul);
-  playersInGame.forEach(name => {
+  window.__playersInGame.forEach(name => {
     const li = document.createElement('li');
     li.textContent = name + (voted.includes(name) ? ' ✅' : '');
     ul.appendChild(li);
@@ -283,61 +361,69 @@ socket.on('voteProgress', ({ voted }) => {
 });
 
 // Stimmen werden offenbart (wer für wen gestimmt hat)
+// Speichere die Votes für die Ergebnisanzeige
+let lastVotes = {};
 socket.on('voteReveal', (votes) => {
+  lastVotes = votes;
   if (!voteProgressList) return;
   voteProgressList.innerHTML = '<h3>Stimmen:</h3>';
   const ul = document.createElement('ul');
   voteProgressList.appendChild(ul);
+  // Nur ingame-Spieler anzeigen
+  const ingameNames = window.__playersInGame || [];
   Object.entries(votes).forEach(([voter, votedFor]) => {
-    const li = document.createElement('li');
-    li.textContent = `${voter} stimmt für ${votedFor}`;
-    ul.appendChild(li);
+    if (ingameNames.includes(voter)) {
+      const li = document.createElement('li');
+      li.textContent = `${voter} stimmt für ${votedFor}`;
+      ul.appendChild(li);
+    }
   });
   // Zeige die Liste auch im Abstimmungsbereich, falls Voting-Screen noch sichtbar
   let votingDiv = document.getElementById('screen-voting');
   if (votingDiv) {
-    votingDiv.style.display = 'block';
+    votingDiv.style.display = 'none'; // Voting-Screen ausblenden
   }
-});
 
-// Auflösung nach Stimmen-Enthüllung
-socket.on('reveal', (data) => {
-  const votingDiv = document.getElementById('screen-voting');
-  if (votingDiv) votingDiv.style.display = 'none';
-
-  screenResult.style.display = 'block';
-  screenDiscussion.style.display = 'none';
-  screenQuestion.style.display = 'none';
-  screenJoin.style.display = 'none';
-
-  let text = '';
-  if (data.impostorName) {
-    text = `Der Impostor war: ${data.impostorName}`;
-    if (data.impostorWon) {
-      text += ' – Der Impostor hat GEWONNEN!';
-    } else {
-      text += ' – Der Impostor wurde gefunden!';
-    }
-  } else {
-    text = 'Unentschieden! Niemand wird eliminiert.';
+  // Timer ausblenden nach Auswertung
+  if (voteTimerDiv) voteTimerDiv.style.display = 'none';
+  if (voteTimerInterval) {
+    clearInterval(voteTimerInterval);
+    voteTimerInterval = null;
   }
-  document.getElementById('resultText').textContent = text;
+  // Wechsel direkt zum Ergebnis-Screen
+  //setTimeout(() => {
+  //setRoundState(4); // Auflösung anzeigen
+  //document.getElementById('resultText').textContent = 'Ergebnisse werden angezeigt...';
+  //}, 1000)
+
 });
 
-// Host bekommt "Spiel beenden"-Knopf nach Auflösung
-socket.on('showEndGameBtn', () => {
-  const btn = document.createElement('button');
-  btn.textContent = 'Spiel beenden';
-  btn.onclick = () => {
-    // Nach Spielende zurück in die Lobby
-    screenResult.style.display = 'none';
-    screenJoin.style.display = 'block';
-    playerListContainer.style.display = 'block';
-    startGameBtn.style.display = 'none';
-    document.getElementById('resultText').textContent = '';
-  };
-  document.getElementById('screen-result').appendChild(btn);
-});
+// Abstimmungs-Button anpassen, falls vorhanden
+const voteBtn = document.getElementById('voteBtn');
+if (voteBtn) voteBtn.textContent = 'Abstimmung starten';
+
+// Buttons für Spielende/Lobby nur einmal erzeugen
+function ensureResultButtons() {
+  let backToLobbyBtn = document.getElementById('backToLobbyBtn');
+  if (!backToLobbyBtn) {
+    backToLobbyBtn = document.createElement('button');
+    backToLobbyBtn.id = 'backToLobbyBtn';
+    backToLobbyBtn.textContent = 'Zurück zur Lobby';
+    backToLobbyBtn.style.display = 'none';
+    backToLobbyBtn.onclick = () => {
+      screenResult.style.display = 'none';
+      screenJoin.style.display = 'block';
+      playerListContainer.style.display = 'block';
+      startGameBtn.style.display = 'none';
+      document.getElementById('resultText').textContent = '';
+      // Entferne die Vote-Details falls vorhanden
+      const voteDetails = document.getElementById('voteDetails');
+      if (voteDetails) voteDetails.remove();
+    };
+    document.getElementById('screen-result').appendChild(backToLobbyBtn);
+  }
+}
+ensureResultButtons();
 
 // Spieler kann Raum verlassen
 if (playerListContainer) {
@@ -374,3 +460,219 @@ if (playerListContainer) {
 //   return btn;
 // }
 
+function setRoundState(state) {
+  roundState = state;
+  updateScreen();
+}
+
+function updateScreen() {
+  // Lobby
+  if (roundState === 0 || !isCurrentPlayerIngame()) {
+    if (screenJoin) screenJoin.style.display = 'none';
+    if (screenQuestion) screenQuestion.style.display = 'none';
+    if (screenDiscussion) screenDiscussion.style.display = 'none';
+    if (screenVoting) screenVoting.style.display = 'none';
+    if (screenResult) screenResult.style.display = 'none';
+    if (screenWaiting) screenWaiting.style.display = 'none';
+    if (playerListContainer) playerListContainer.style.display = 'block';
+    updateLobbyStatus('Du bist aktuell nicht im Spiel. Warte auf die nächste Runde.');
+    return;
+  }
+  // Antwort
+  if (roundState === 1) {
+    if (screenJoin) screenJoin.style.display = 'none';
+    if (screenQuestion) screenQuestion.style.display = 'block';
+    if (screenDiscussion) screenDiscussion.style.display = 'none';
+    if (screenVoting) screenVoting.style.display = 'none';
+    if (screenResult) screenResult.style.display = 'none';
+    if (screenWaiting) screenWaiting.style.display = 'none';
+    if (playerListContainer) playerListContainer.style.display = 'none';
+    return;
+  }
+  // Diskussion
+  if (roundState === 2) {
+    if (screenJoin) screenJoin.style.display = 'none';
+    if (screenQuestion) screenQuestion.style.display = 'none';
+    if (screenDiscussion) screenDiscussion.style.display = 'block';
+    if (screenVoting) screenVoting.style.display = 'none';
+    if (screenResult) screenResult.style.display = 'none';
+    if (screenWaiting) screenWaiting.style.display = 'none';
+    if (playerListContainer) playerListContainer.style.display = 'none';
+    return;
+  }
+  // Abstimmung
+  if (roundState === 3) {
+    if (screenJoin) screenJoin.style.display = 'none';
+    if (screenQuestion) screenQuestion.style.display = 'none';
+    if (screenDiscussion) screenDiscussion.style.display = 'none';
+    // Voting-Screen bleibt IMMER sichtbar während roundState === 3!
+    if (screenVoting) screenVoting.style.display = 'block';
+    if (screenResult) screenResult.style.display = 'none';
+    if (screenWaiting) screenWaiting.style.display = 'none';
+    if (playerListContainer) playerListContainer.style.display = 'none';
+    return;
+  }
+  // Auflösung
+  if (roundState === 4) {
+    if (screenJoin) screenJoin.style.display = 'none';
+    if (screenQuestion) screenQuestion.style.display = 'none';
+    if (screenDiscussion) screenDiscussion.style.display = 'none';
+    if (screenVoting) screenVoting.style.display = 'none';
+    if (screenResult) screenResult.style.display = 'block';
+    if (screenWaiting) screenWaiting.style.display = 'none';
+    if (playerListContainer) playerListContainer.style.display = 'none';
+    return;
+  }
+}
+
+// Abstimmungs-Timer anzeigen (gut sichtbar, oben rechts im Abstimmungs-Screen)
+let voteTimerDiv = null;
+let voteTimerInterval = null;
+socket.on('voteTimerStarted', ({ seconds }) => {
+  setRoundState(3);
+  let votingDiv = document.getElementById('screen-voting');
+  if (!voteTimerDiv) {
+    voteTimerDiv = document.createElement('div');
+    voteTimerDiv.id = 'voteTimerDiv';
+    voteTimerDiv.style.position = 'absolute';
+    voteTimerDiv.style.top = '12px';
+    voteTimerDiv.style.right = '18px';
+    voteTimerDiv.style.zIndex = '10';
+    voteTimerDiv.style.fontWeight = 'bold';
+    voteTimerDiv.style.color = 'var(--orange)';
+    voteTimerDiv.style.background = 'var(--light)';
+    voteTimerDiv.style.border = '2px solid var(--orange)';
+    voteTimerDiv.style.borderRadius = '8px';
+    voteTimerDiv.style.padding = '0.5em 1em';
+    voteTimerDiv.style.fontSize = '1.1em';
+    voteTimerDiv.style.boxShadow = '0 2px 12px rgba(237,75,0,0.12)';
+    if (votingDiv) votingDiv.appendChild(voteTimerDiv);
+  }
+  voteTimerDiv.style.display = 'block';
+  let timeLeft = seconds;
+  voteTimerDiv.textContent = `⏳ ${timeLeft}s`;
+  if (voteTimerInterval) clearInterval(voteTimerInterval);
+  voteTimerInterval = setInterval(() => {
+    timeLeft--;
+    if (timeLeft > 0) {
+      voteTimerDiv.textContent = `⏳ ${timeLeft}s`;
+    } else {
+      voteTimerDiv.textContent = '⏳ Abstimmung beendet!';
+      clearInterval(voteTimerInterval);
+      voteTimerInterval = null;
+      // Timer bleibt sichtbar bis zur Auswertung, Abstimmungs-Screen bleibt offen
+    }
+  }, 1000);
+});
+
+function updateScreen() {
+  // Lobby
+  if (roundState === 0 || !isCurrentPlayerIngame()) {
+    if (screenJoin) screenJoin.style.display = 'none';
+    if (screenQuestion) screenQuestion.style.display = 'none';
+    if (screenDiscussion) screenDiscussion.style.display = 'none';
+    if (screenVoting) screenVoting.style.display = 'none';
+    if (screenResult) screenResult.style.display = 'none';
+    if (screenWaiting) screenWaiting.style.display = 'none';
+    if (playerListContainer) playerListContainer.style.display = 'block';
+    updateLobbyStatus('Du bist aktuell nicht im Spiel. Warte auf die nächste Runde.');
+    return;
+  }
+  // Antwort
+  if (roundState === 1) {
+    if (screenJoin) screenJoin.style.display = 'none';
+    if (screenQuestion) screenQuestion.style.display = 'block';
+    if (screenDiscussion) screenDiscussion.style.display = 'none';
+    if (screenVoting) screenVoting.style.display = 'none';
+    if (screenResult) screenResult.style.display = 'none';
+    if (screenWaiting) screenWaiting.style.display = 'none';
+    if (playerListContainer) playerListContainer.style.display = 'none';
+    return;
+  }
+  // Diskussion
+  if (roundState === 2) {
+    if (screenJoin) screenJoin.style.display = 'none';
+    if (screenQuestion) screenQuestion.style.display = 'none';
+    if (screenDiscussion) screenDiscussion.style.display = 'block';
+    if (screenVoting) screenVoting.style.display = 'none';
+    if (screenResult) screenResult.style.display = 'none';
+    if (screenWaiting) screenWaiting.style.display = 'none';
+    if (playerListContainer) playerListContainer.style.display = 'none';
+    return;
+  }
+  // Abstimmung
+  if (roundState === 3) {
+    if (screenJoin) screenJoin.style.display = 'none';
+    if (screenQuestion) screenQuestion.style.display = 'none';
+    if (screenDiscussion) screenDiscussion.style.display = 'none';
+    // Voting-Screen bleibt IMMER sichtbar während roundState === 3!
+    if (screenVoting) screenVoting.style.display = 'block';
+    if (screenResult) screenResult.style.display = 'none';
+    if (screenWaiting) screenWaiting.style.display = 'none';
+    if (playerListContainer) playerListContainer.style.display = 'none';
+    return;
+  }
+  // Auflösung
+  if (roundState === 4) {
+    if (screenJoin) screenJoin.style.display = 'none';
+    if (screenQuestion) screenQuestion.style.display = 'none';
+    if (screenDiscussion) screenDiscussion.style.display = 'none';
+    if (screenVoting) screenVoting.style.display = 'none';
+    if (screenResult) screenResult.style.display = 'block';
+    if (screenWaiting) screenWaiting.style.display = 'none';
+    if (playerListContainer) playerListContainer.style.display = 'none';
+    return;
+  }
+}
+
+socket.on('reveal', ({ impostorName, impostorWon }) => {
+  setRoundState(4); // Wechsel auf Ergebnisbildschirm
+
+  let resultText = '';
+  if (impostorName) {
+    resultText = `Der Impostor war: ${impostorName}. `;
+    resultText += impostorWon
+      ? 'Der Impostor konnte unentdeckt bleiben!'
+      : 'Der Impostor wurde enttarnt!';
+  } else {
+    resultText = 'Unentschieden oder Spiel wurde abgebrochen.';
+  }
+
+  const resultEl = document.getElementById('resultText');
+  if (resultEl) resultEl.textContent = resultText;
+
+  // Voting-Screen ausblenden
+  const votingScreen = document.getElementById('screen-voting');
+  if (votingScreen) votingScreen.style.display = 'none';
+});
+
+const stayInRoomBtn = document.getElementById('stayInRoomBtn');
+if (stayInRoomBtn) {
+  stayInRoomBtn.onclick = () => {
+    screenResult.style.display = 'none';
+    playerListContainer.style.display = 'block';
+    startGameBtn.style.display = isHost && playersInGame.length >= 3 ? 'block' : 'none';
+    document.getElementById('resultText').textContent = '';
+    const voteDetails = document.getElementById('voteDetails');
+    if (voteDetails) voteDetails.remove();
+  };
+}
+
+const leaveRoomToLobbyBtn = document.getElementById('leaveRoomToLobbyBtn');
+if (leaveRoomToLobbyBtn) {
+  leaveRoomToLobbyBtn.onclick = () => {
+    socket.emit('leaveRoom', { code: currentGameCode });
+    screenResult.style.display = 'none';
+    screenJoin.style.display = 'block';
+    playerListContainer.style.display = 'none';
+    startGameBtn.style.display = 'none';
+    currentGameCode = '';
+    isHost = false;
+    playerName = '';
+    document.getElementById('username').value = '';
+    document.getElementById('gameCode').value = '';
+    document.getElementById('resultText').textContent = '';
+    const voteDetails = document.getElementById('voteDetails');
+    if (voteDetails) voteDetails.remove();
+  };
+}

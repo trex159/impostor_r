@@ -85,6 +85,8 @@ button {
   color: var(--light);
   border: none;
   padding: 0.9em 1.2em;
+  margin-top: 3px;
+  margin-bottom: 3px;
   font-size: 1em;
   font-weight: 700;
   cursor: pointer;
@@ -143,6 +145,21 @@ li {
   font-weight: 700;
   margin-bottom: 0.5em;
   text-align: center;
+}
+
+#voteTimerDiv {
+  background: var(--light);
+  color: var(--orange);
+  border: 2px solid var(--orange);
+  border-radius: 8px;
+  padding: 0.5em 1em;
+  font-size: 1.1em;
+  font-weight: bold;
+  box-shadow: 0 2px 12px rgba(237,75,0,0.12);
+  position: absolute;
+  top: 12px;
+  right: 18px;
+  z-index: 10;
 }
 
 @media (max-width: 800px) {
